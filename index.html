@@ -377,6 +377,24 @@
         margin: 0 0 8px;
       }
 
+      .feed-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 8px;
+      }
+
+      .feed-compose-btn {
+        width: 34px;
+        height: 34px;
+        border-radius: 50%;
+        border: 1px solid var(--card-border);
+        background: rgba(255, 255, 255, 0.1);
+        color: var(--text);
+        font-size: 16px;
+        cursor: pointer;
+      }
+
       .event-list {
         margin: 0;
         padding-left: 18px;
@@ -929,11 +947,13 @@
 
               <section class="menu-page">
                 <article class="rank-card">
-                  <h3>Лента</h3>
-                  <form id="feedForm" class="feed-form">
+                  <div class="feed-head">
+                    <h3>Лента</h3>
+                    <button id="feedComposeBtn" class="feed-compose-btn hidden" type="button" aria-label="Написать пост">✏️</button>
+                  </div>
+                  <form id="feedForm" class="feed-form hidden">
                     <textarea id="feedInput" class="profile-textarea" rows="2" maxlength="120" placeholder="Поделиться новостью..."></textarea>
                     <button class="btn" type="submit">Опубликовать</button>
-                    <p id="feedError" class="form-error hidden">Публиковать посты может только @admin</p>
                   </form>
                   <div id="feedList" class="feed-list"></div>
                 </article>
@@ -1083,7 +1103,7 @@
       const feedForm = $("feedForm");
       const feedInput = $("feedInput");
       const feedList = $("feedList");
-      const feedError = $("feedError");
+      const feedComposeBtn = $("feedComposeBtn");
       const feedSubmitBtn = feedForm.querySelector("button[type='submit']");
       const onlineBadge = $("onlineBadge");
       const tabProfile = $("tabProfile");
@@ -1106,7 +1126,6 @@
       let touchStartX = 0;
       let currentSessionUser = "";
       let pendingAvatarData = "";
-      const botPool = ["User245", "User871", "User602", "User991", "User314", "User777", "User120"];
 
       const safeJSON = (raw, fallback) => {
         try { return JSON.parse(raw) ?? fallback; } catch { return fallback; }
@@ -1137,7 +1156,7 @@
       };
 
       const updateOnlineBadge = () => {
-        const count = Math.max(1, activeOnlineUsers().length);
+        const count = activeOnlineUsers().length;
         onlineBadge.textContent = `Online: ${count}`;
       };
 
@@ -1203,6 +1222,43 @@
           .join("");
       };
 
+      const leaderboardData = () => {
+        const list = users();
+        return Object.entries(list)
+          .map(([username, account]) => {
+            const profile = safeJSON(localStorage.getItem(statsKey(username)), { rating: 1200, matches: 0, wins: 0 });
+            return {
+              username,
+              displayName: account.name || account.nick || username,
+              rating: Number(profile.rating) || 1200,
+              matches: Number(profile.matches) || 0,
+              wins: Number(profile.wins) || 0
+            };
+          })
+          .sort((a, b) => b.rating - a.rating || b.wins - a.wins || b.matches - a.matches || a.username.localeCompare(b.username));
+      };
+
+      const renderLeaderboard = (currentUsername) => {
+        const leaderboard = leaderboardData();
+        if (!leaderboard.length) {
+          userRankList.innerHTML = "<li>Пока нет игроков в рейтинге.</li>";
+          return;
+        }
+
+        const currentIndex = leaderboard.findIndex((player) => player.username === currentUsername);
+        const aroundCurrent = currentIndex >= 0
+          ? leaderboard.slice(Math.max(0, currentIndex - 1), currentIndex + 2)
+          : leaderboard.slice(0, 3);
+
+        userRankList.innerHTML = aroundCurrent
+          .map((player) => {
+            const rank = leaderboard.findIndex((item) => item.username === player.username) + 1;
+            const you = player.username === currentUsername ? " (вы)" : "";
+            return `<li>${rank}. ${player.displayName} — ${player.rating}${you}</li>`;
+          })
+          .join("");
+      };
+
       const openMenu = (username) => {
         const normalizedSession = username.toLowerCase();
         currentSessionUser = normalizedSession;
@@ -1214,11 +1270,7 @@
         const account = list[normalizedSession] || list[username] || {};
         const visibleName = account.name || account.nick || username;
         welcomeText.textContent = `Добро пожаловать, ${visibleName}!`;
-        userRankList.innerHTML = `
-          <li>996. User996</li>
-          <li>997. ${visibleName}</li>
-          <li>998. User998</li>
-        `;
+        renderLeaderboard(normalizedSession);
         renderProfile(account, username, profile);
         renderFeed();
         const presence = getPresence();
@@ -1233,9 +1285,10 @@
         }, 8000);
         updateOnlineBadge();
         const isAdmin = normalizedSession === "admin";
+        feedComposeBtn.classList.toggle("hidden", !isAdmin);
+        feedForm.classList.add("hidden");
         feedSubmitBtn.disabled = !isAdmin;
         feedInput.disabled = !isAdmin;
-        feedError.classList.toggle("hidden", isAdmin);
         setMenuPage("home");
         resetMatchmaking();
 
@@ -1260,7 +1313,6 @@
         matchModal.classList.add("hidden");
         profileEditModal.classList.add("hidden");
         loginError.classList.add("hidden");
-        feedError.classList.add("hidden");
         loginForm.reset();
         registerForm.reset();
         setMode("login");
@@ -1323,7 +1375,8 @@
         playBtn.textContent = "Поиск...";
         matchModal.classList.remove("hidden");
         gameStatus.textContent = "Идёт подбор игроков...";
-        const queue = Array.from(new Set([...getQueue(), currentName]));
+        const active = activeOnlineUsers();
+        const queue = Array.from(new Set([...getQueue().filter((name) => active.includes(name)), currentName]));
         saveQueue(queue);
         matchStatus.textContent = "Подбор соперников: 1/4";
         matchPlayers.innerHTML = `<li>${currentName} (вы)</li>`;
@@ -1406,15 +1459,17 @@
       tabHome.addEventListener("click", () => setMenuPage("home"));
       tabTour.addEventListener("click", () => setMenuPage("tour"));
       tabMore.addEventListener("click", () => setMenuPage("more"));
+      feedComposeBtn.addEventListener("click", () => {
+        if (currentSessionUser !== "admin") return;
+        const willOpen = feedForm.classList.contains("hidden");
+        feedForm.classList.toggle("hidden", !willOpen);
+        if (willOpen) feedInput.focus();
+      });
       feedForm.addEventListener("submit", (e) => {
         e.preventDefault();
-        if (currentSessionUser !== "admin") {
-          feedError.classList.remove("hidden");
-          return;
-        }
+        if (currentSessionUser !== "admin") return;
         const text = feedInput.value.trim();
         if (!text || !currentSessionUser) return;
-        const account = users()[currentSessionUser] || {};
         const author = `@${currentSessionUser}`;
         const posts = getFeed();
         posts.unshift({
@@ -1426,7 +1481,7 @@
         });
         saveFeed(posts.slice(0, 30));
         feedInput.value = "";
-        feedError.classList.add("hidden");
+        feedForm.classList.add("hidden");
         renderFeed();
       });
       feedList.addEventListener("click", (e) => {
@@ -1476,6 +1531,7 @@
         localStorage.setItem(statsKey(currentSessionUser), JSON.stringify(profile));
 
         renderProfile(account, currentSessionUser, profile);
+        renderLeaderboard(currentSessionUser);
         welcomeText.textContent = `Добро пожаловать, ${account.name || currentSessionUser}!`;
         closeEditProfile();
       });
@@ -1500,9 +1556,20 @@
           resetMatchmaking();
         }
       });
+      window.addEventListener("beforeunload", () => {
+        if (!currentSessionUser) return;
+        const presence = getPresence();
+        delete presence[currentSessionUser];
+        savePresence(presence);
+        const queue = getQueue().filter((name) => name !== currentSessionUser);
+        saveQueue(queue);
+      });
       window.addEventListener("storage", (e) => {
         if (e.key === keys.feed) renderFeed();
         if (e.key === keys.presence) updateOnlineBadge();
+        if (e.key === keys.users || (e.key && e.key.startsWith("apple_single_profile_"))) {
+          renderLeaderboard(currentSessionUser);
+        }
         if (e.key === keys.queue && matchmakingTimer) {
           // Let matchmaking loop pick updates on next tick.
         }
